@@ -1,0 +1,4 @@
+glfw==1.11.1
+numpy==1.18.4
+pyopengl-accelerate==3.1.5
+pyopengl==3.1.5

@@ -2,6 +2,9 @@ name: glip
 channels:
   - defaults
 dependencies:
-  - numpy=1.18.1
   - pip=20.0.2
   - python=3.8.2
+  - pip:
+      - -r requirements/common.txt
+      - -r requirements/development.txt
+      - -e .

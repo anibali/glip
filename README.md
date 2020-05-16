@@ -1,3 +1,3 @@
 # Glip
 
-An OpenGL interface for Python.
+An OpenGL 3.3 interface for Python.
