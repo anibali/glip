@@ -15,3 +15,7 @@ def test_shared_object_context():
     with pytest.raises(Exception):
         ebo.bind()
     window1.activate()
+    ebo.destroy()
+    window1.destroy()
+    window2.destroy()
+    window3.destroy()

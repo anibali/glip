@@ -1,5 +1,6 @@
-from glip.gl.objects import ShaderProgram, VertexShader, FragmentShader
+import pytest
 
+from glip.gl.objects import ShaderProgram, VertexShader, FragmentShader
 
 vertex_shader_source = r"""
 #version 330 core
@@ -27,4 +28,14 @@ def test_shader(window):
     fragment_shader.compile(fragment_shader_source)
     program = ShaderProgram()
     program.link([vertex_shader, fragment_shader])
+    vertex_shader.destroy()
+    fragment_shader.destroy()
     program.use()
+    program.destroy()
+
+
+def test_shader_compile_error(window):
+    vertex_shader = VertexShader()
+    with pytest.raises(RuntimeError):
+        vertex_shader.compile("voidz main() {}")
+    vertex_shader.destroy()

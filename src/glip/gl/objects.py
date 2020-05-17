@@ -1,7 +1,10 @@
+import traceback
+import warnings
 from abc import ABC, abstractmethod
 
 import OpenGL.GL as gl
 
+from glip.config import cfg
 from glip.gl.context import Window
 
 
@@ -12,11 +15,14 @@ class _GLObject(ABC):
         assert window is not None
         self._window = window
         self._shareable = shareable
+        if cfg.monitor_leaks:
+            self._stack_trace = traceback.StackSummary.extract(traceback.walk_stack(None))
 
     @property
     def handle(self):
         """Get the OpenGL handle for this object."""
         assert self.exists_in_current_context()
+        assert not self.is_destroyed()
         return self._handle
 
     def exists_in_current_context(self):
@@ -25,12 +31,22 @@ class _GLObject(ABC):
             return self._window.object_context.is_active()
         return self._window.is_active()
 
+    def is_destroyed(self):
+        return self._handle is None
+
     @abstractmethod
     def _do_destroy(self):
         pass
 
     def destroy(self):
         self._do_destroy()
+        self._handle = None
+
+    def __del__(self):
+        if cfg.monitor_leaks and not self.is_destroyed():
+            warnings.warn('A GL object has been garbage collected without being destroyed first.\n'
+                          'Stack trace for object creation:\n'
+                          + ''.join(self._stack_trace.format()[1:]))
 
 
 class _BindableGLObject(_GLObject):
