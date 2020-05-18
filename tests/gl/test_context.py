@@ -1,6 +1,8 @@
+import numpy as np
+import pytest
+
 from glip.gl.context import Window
 from glip.gl.objects import EBO
-import pytest
 
 
 def test_shared_object_context():
@@ -8,7 +10,7 @@ def test_shared_object_context():
     window2 = Window(800, 600, object_context=window1.object_context, hidden=True)
     window3 = Window(800, 600, hidden=True)
     window1.activate()
-    ebo = EBO()
+    ebo = EBO(np.arange(5, dtype=np.uint32))
     window2.activate()
     ebo.bind()
     window3.activate()

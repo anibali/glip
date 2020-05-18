@@ -1,11 +1,51 @@
+import enum
 import traceback
 import warnings
 from abc import ABC, abstractmethod
+from typing import Optional
 
 import OpenGL.GL as gl
+import numpy as np
 
 from glip.config import cfg
 from glip.gl.context import Window
+
+
+def np_to_gl_type(np_type: np.dtype):
+    if np_type == np.int8:
+        return gl.GL_BYTE
+    if np_type == np.uint8:
+        return gl.GL_UNSIGNED_BYTE
+    if np_type == np.int16:
+        return gl.GL_SHORT
+    if np_type == np.uint16:
+        return gl.GL_UNSIGNED_SHORT
+    if np_type == np.int32:
+        return gl.GL_INT
+    if np_type == np.uint32:
+        return gl.GL_UNSIGNED_INT
+    if np_type == np.float16:
+        return gl.GL_HALF_FLOAT
+    if np_type == np.float32:
+        return gl.GL_FLOAT
+    if np_type == np.float64:
+        return gl.GL_DOUBLE
+    raise TypeError(f'Unsupported base data type: {np_type}')
+
+
+class PrimitiveType(enum.Enum):
+    POINTS = gl.GL_POINTS
+    LINES = gl.GL_LINES
+    LINE_LOOP = gl.GL_LINE_LOOP
+    LINE_STRIP = gl.GL_LINE_STRIP
+    TRIANGLES = gl.GL_TRIANGLES
+    TRIANGLE_STRIP = gl.GL_TRIANGLE_STRIP
+    TRIANGLE_FAN = gl.GL_TRIANGLE_FAN
+    LINES_ADJACENCY = gl.GL_LINES_ADJACENCY
+    LINE_STRIP_ADJACENCY = gl.GL_LINE_STRIP_ADJACENCY
+    TRIANGLES_ADJACENCY = gl.GL_TRIANGLES_ADJACENCY
+    TRIANGLE_STRIP_ADJACENCY = gl.GL_TRIANGLE_STRIP_ADJACENCY
+    PATCHES = gl.GL_PATCHES
 
 
 class _GLObject(ABC):
@@ -50,22 +90,44 @@ class _GLObject(ABC):
 
 
 class _BindableGLObject(_GLObject):
-    def __init__(self, kind, handle, shareable):
+    def __init__(self, handle, shareable):
         super().__init__(handle, shareable)
-        self._kind = kind
+
+    @property
+    @classmethod
+    @abstractmethod
+    def kind(cls) -> str:
+        pass
+
+    @classmethod
+    def get_bound(cls):
+        return Window.get_active().get_bound(cls.kind)
+
+    def _set_bound(self):
+        Window.get_active().set_bound(self.kind, self)
 
     @abstractmethod
-    def _do_bind(self):
+    def _do_bind(cls, handle):
         pass
 
     def is_bound(self):
         """Returns True if this object is bound to the current OpenGL context."""
-        return self is Window.get_active().get_bound(self._kind)
+        assert self.exists_in_current_context()
+        return self is self.get_bound()
 
-    def bind(self):
+    def bind(self) -> bool:
+        if self.is_bound():
+            return False
+        self._do_bind(self.handle)
+        self._set_bound()
+        return True
+
+    def unbind(self) -> bool:
         if not self.is_bound():
-            self._do_bind()
-            Window.get_active().set_bound(self._kind, self)
+            return False
+        self._do_bind(0)
+        Window.get_active().clear_bound(self.kind)
+        return True
 
     def destroy(self):
         super().destroy()
@@ -74,18 +136,18 @@ class _BindableGLObject(_GLObject):
         else:
             windows = [self._window]
         for window in windows:
-            if self is window.get_bound(self._kind):
-                window.clear_bound(self._kind)
+            if self is window.get_bound(self.kind):
+                window.clear_bound(self.kind)
 
 
 class BufferObject(_BindableGLObject):
-    def __init__(self, kind, target):
+    def __init__(self, target):
         self._target = target
-        super().__init__(kind, gl.glGenBuffers(1), shareable=True)
+        super().__init__(gl.glGenBuffers(1), shareable=True)
         self.bind()
 
-    def _do_bind(self):
-        gl.glBindBuffer(self._target, self.handle)
+    def _do_bind(self, handle):
+        gl.glBindBuffer(self._target, handle)
 
     def _do_destroy(self):
         if gl.glDeleteBuffers is not None:
@@ -93,26 +155,102 @@ class BufferObject(_BindableGLObject):
 
 
 class VBO(BufferObject):
+    kind = object()
+
     def __init__(self):
-        super().__init__(VBO, gl.GL_ARRAY_BUFFER)
+        super().__init__(gl.GL_ARRAY_BUFFER)
 
 
 class EBO(BufferObject):
-    def __init__(self):
-        super().__init__(EBO, gl.GL_ELEMENT_ARRAY_BUFFER)
+    kind = object()
+
+    def __init__(self, data: np.ndarray, usage=gl.GL_DYNAMIC_DRAW):
+        super().__init__(gl.GL_ELEMENT_ARRAY_BUFFER)
+        self.usage = usage
+        self._length = len(data)
+        self._gl_type = np_to_gl_type(data.dtype.base)
+        self.allocate_and_write(data)
+
+    def bind(self) -> bool:
+        changed = super().bind()
+        if changed:
+            vao = VAO.get_bound()
+            # FIXME: This currently makes it very difficult to create EBOs, since
+            #        the EBO initialiser will attempt to bind it, which can't be done
+            #        while a VAO is bound.
+            assert vao.handle == 0 or vao.ebo is self, 'use VAO.bind_ebo to bind an EBO to a VAO'
+            vao._ebo = self
+        return changed
+
+    def allocate_and_write(self, data: np.ndarray):
+        assert self.is_bound()
+        gl.glBufferData(gl.GL_ELEMENT_ARRAY_BUFFER, data.nbytes, data.data, self.usage)
+
+    def draw_elements(self, mode: PrimitiveType = PrimitiveType.TRIANGLES):
+        assert self.is_bound()
+        gl.glDrawElements(mode.value, self._length, self._gl_type, None)
 
 
 class UBO(BufferObject):
+    kind = object()
+
     def __init__(self):
-        super().__init__(UBO, gl.GL_UNIFORM_BUFFER)
+        super().__init__(gl.GL_UNIFORM_BUFFER)
 
 
-class VAO(_BindableGLObject):
+class _VAO(_BindableGLObject):
+    kind = object()
+
+    def __init__(self, handle):
+        super().__init__(handle, shareable=False)
+        self._ebo = None
+
+    def bind(self) -> bool:
+        changed = super().bind()
+        if changed:
+            if self.ebo is not None:
+                self.ebo._set_bound()
+            else:
+                Window.get_active().clear_bound(EBO.kind)
+        return changed
+
+    def bind_ebo(self, ebo: EBO):
+        assert self.is_bound()
+        self._ebo = ebo
+        ebo.bind()
+
+    @property
+    def ebo(self):
+        return self._ebo
+
+    def draw_elements(self, mode: PrimitiveType = PrimitiveType.TRIANGLES):
+        assert self.is_bound()
+        assert self.ebo is not None
+        self.ebo.draw_elements(mode)
+
+    def _do_bind(self, handle):
+        gl.glBindVertexArray(handle)
+
+
+class DefaultVAO(_VAO):
     def __init__(self):
-        super().__init__(VAO, gl.glGenVertexArrays(1), shareable=False)
+        super().__init__(0)
 
-    def _do_bind(self):
-        gl.glBindVertexArray(self.handle)
+    def _do_destroy(self):
+        pass
+
+
+class VAO(_VAO):
+    def __init__(self, ebo: Optional[EBO] = None):
+        super().__init__(gl.glGenVertexArrays(1))
+        self._ebo = None
+        self.bind()
+        if ebo is not None:
+            self.bind_ebo(ebo)
+
+    @classmethod
+    def get_default(cls):
+        return Window.get_default(cls.kind)
 
     def _do_destroy(self):
         if gl.glDeleteVertexArrays is not None:
@@ -120,13 +258,13 @@ class VAO(_BindableGLObject):
 
 
 class TextureObject(_BindableGLObject):
-    def __init__(self, kind, target):
+    def __init__(self, target):
         self._target = target
-        super().__init__(kind, gl.glGenTextures(1), shareable=True)
+        super().__init__(gl.glGenTextures(1), shareable=True)
         self.bind()
 
-    def _do_bind(self):
-        gl.glBindTexture(self._target, self.handle)
+    def _do_bind(self, handle):
+        gl.glBindTexture(self._target, handle)
 
     def _do_destroy(self):
         if gl.glDeleteTextures is not None:
@@ -134,8 +272,10 @@ class TextureObject(_BindableGLObject):
 
 
 class Texture2D(TextureObject):
+    kind = object()
+
     def __init__(self):
-        super().__init__(Texture2D, gl.GL_TEXTURE_2D)
+        super().__init__(gl.GL_TEXTURE_2D)
 
 
 class ShaderObject(_GLObject):
@@ -179,8 +319,10 @@ class FragmentShader(ShaderObject):
 
 
 class ShaderProgram(_BindableGLObject):
+    kind = object()
+
     def __init__(self):
-        super().__init__(ShaderProgram, gl.glCreateProgram(), shareable=True)
+        super().__init__(gl.glCreateProgram(), shareable=True)
 
     def gl_attach_shader(self, shader: ShaderObject):
         gl.glAttachShader(self.handle, shader.handle)
@@ -215,9 +357,12 @@ class ShaderProgram(_BindableGLObject):
     def use(self):
         self.bind()
 
-    def _do_bind(self):
-        gl.glUseProgram(self.handle)
+    def _do_bind(self, handle):
+        gl.glUseProgram(handle)
 
     def _do_destroy(self):
         if gl.glDeleteProgram is not None:
             gl.glDeleteProgram(self.handle)
+
+
+Window.set_bound_default_class(VAO.kind, DefaultVAO)

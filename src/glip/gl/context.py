@@ -19,7 +19,8 @@ def initialise_glfw():
 
 
 class Window:
-    _active: weakref.ReferenceType = lambda: None
+    _active: Optional['Window'] = None
+    _default_classes = {}
 
     def __init__(
         self,
@@ -42,35 +43,54 @@ class Window:
         if share is not None:
             object_context.attach(self)
         self.object_context = object_context
-        self._bound = weakref.WeakValueDictionary()
+        self._bound = {}
+        self.activate()
+        self._defaults = {}
+        for kind, default_class in self._default_classes.items():
+            self._defaults[kind] = default_class()
+
+    @classmethod
+    def set_bound_default_class(cls, kind, default_class):
+        cls._default_classes[kind] = default_class
+
+    @classmethod
+    def get_default(cls, kind):
+        return cls.get_active()._defaults[kind]
 
     def set_bound(self, kind, gl_object):
-        assert isinstance(gl_object, kind)
+        assert gl_object.kind == kind
         self._bound[kind] = gl_object
 
     def get_bound(self, kind):
-        return self._bound.get(kind, None)
+        return self._bound.get(kind, self._defaults.get(kind, None))
 
     def clear_bound(self, kind):
-        del self._bound[kind]
+        if kind in self._bound:
+            del self._bound[kind]
 
     @classmethod
     def get_active(cls) -> Optional['Window']:
-        return cls._active()
+        return cls._active
 
     def is_active(self):
         return self is Window.get_active()
 
     def activate(self):
         glfw.make_context_current(self._glfw_window)
-        Window._active = weakref.ref(self)
+        Window._active = self
 
     def destroy(self):
+        old_active = Window._active
+        self.activate()
+        for default in self._defaults.values():
+            default.destroy()
         self.object_context.detach(self)
         glfw.destroy_window(self._glfw_window)
-        if self.is_active():
-            Window._active = lambda: None
         del self._glfw_window
+        if old_active is None or old_active is self:
+            Window._active = None
+        else:
+            old_active.activate()
 
 
 class ObjectContext:
