@@ -1,6 +1,7 @@
 import weakref
 from typing import Optional
 
+import OpenGL.GL as gl
 import glfw
 
 _glfw_is_initialised = False
@@ -91,6 +92,19 @@ class Window:
             Window._active = None
         else:
             old_active.activate()
+
+    def clear_colour(self, red: float, green: float, blue: float, alpha: float = 1.0):
+        assert self.is_active()
+        gl.glClearColor(red, green, blue, alpha)
+
+    def clear(self, colour=None):
+        assert self.is_active()
+        mask = 0
+        if colour is not None:
+            if colour is not True:
+                self.clear_colour(*colour)
+            mask |= gl.GL_COLOR_BUFFER_BIT
+        gl.glClear(mask)
 
 
 class ObjectContext:

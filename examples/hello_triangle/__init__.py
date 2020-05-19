@@ -72,8 +72,7 @@ def main():
     while not glfw.window_should_close(window._glfw_window):
         # TODO: Process input
 
-        gl.glClearColor(0.2, 0.3, 0.3, 1.0)
-        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+        window.clear(colour=[0.2, 0.3, 0.3])
 
         program.use()
         with vao.bound():
