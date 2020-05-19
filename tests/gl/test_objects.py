@@ -7,9 +7,11 @@ def test_ebo(window):
     ebo1 = EBO(np.arange(5, dtype=np.uint32))
     vao1 = VAO(ebo1)
     vao2 = VAO(ebo2)
-    vao1.bind()
-    assert ebo1.is_bound()
-    assert vao1.ebo is ebo1
+    assert VAO.get_default().is_bound()
+    with vao1.bound():
+        assert ebo1.is_bound()
+        assert vao1.ebo is ebo1
+    assert VAO.get_default().is_bound()
     vao2.bind()
     assert ebo2.is_bound()
     assert vao2.ebo is ebo2

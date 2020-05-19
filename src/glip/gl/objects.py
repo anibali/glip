@@ -1,7 +1,9 @@
 import enum
+import sys
 import traceback
 import warnings
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import Optional
 
 import OpenGL.GL as gl
@@ -106,6 +108,7 @@ class _BindableGLObject(_GLObject):
     def _set_bound(self):
         Window.get_active().set_bound(self.kind, self)
 
+    @classmethod
     @abstractmethod
     def _do_bind(cls, handle):
         pass
@@ -122,12 +125,34 @@ class _BindableGLObject(_GLObject):
         self._set_bound()
         return True
 
-    def unbind(self) -> bool:
-        if not self.is_bound():
-            return False
-        self._do_bind(0)
-        Window.get_active().clear_bound(self.kind)
-        return True
+    @classmethod
+    def unbind(cls):
+        cls._do_bind(0)
+        Window.get_active().clear_bound(cls.kind)
+
+    @contextmanager
+    def bound(self):
+        if self.is_bound():
+            yield self
+        else:
+            prev_bound = self.get_bound()
+            self.bind()
+            yield self
+            if prev_bound is None:
+                self.unbind()
+            else:
+                prev_bound.bind()
+
+    @classmethod
+    @contextmanager
+    def unbound(cls):
+        prev_bound = cls.get_bound()
+        cls.unbind()
+        yield cls.get_bound()
+        if prev_bound is None:
+            cls.unbind()
+        else:
+            prev_bound.bind()
 
     def destroy(self):
         super().destroy()
@@ -141,13 +166,18 @@ class _BindableGLObject(_GLObject):
 
 
 class BufferObject(_BindableGLObject):
-    def __init__(self, target):
-        self._target = target
-        super().__init__(gl.glGenBuffers(1), shareable=True)
-        self.bind()
+    @property
+    @classmethod
+    @abstractmethod
+    def _target(cls) -> str:
+        pass
 
-    def _do_bind(self, handle):
-        gl.glBindBuffer(self._target, handle)
+    def __init__(self):
+        super().__init__(gl.glGenBuffers(1), shareable=True)
+
+    @classmethod
+    def _do_bind(cls, handle):
+        gl.glBindBuffer(cls._target, handle)
 
     def _do_destroy(self):
         if gl.glDeleteBuffers is not None:
@@ -156,29 +186,36 @@ class BufferObject(_BindableGLObject):
 
 class VBO(BufferObject):
     kind = object()
+    _target = gl.GL_ARRAY_BUFFER
 
-    def __init__(self):
-        super().__init__(gl.GL_ARRAY_BUFFER)
+    def __init__(self, data: Optional[np.ndarray] = None, usage=gl.GL_DYNAMIC_DRAW):
+        super().__init__()
+        self.usage = usage
+        if data is not None:
+            with self.bound():
+                self.allocate_and_write(data)
+
+    def allocate_and_write(self, data: np.ndarray):
+        assert self.is_bound()
+        gl.glBufferData(gl.GL_ARRAY_BUFFER, data.nbytes, data.data, self.usage)
 
 
 class EBO(BufferObject):
     kind = object()
+    _target = gl.GL_ELEMENT_ARRAY_BUFFER
 
     def __init__(self, data: np.ndarray, usage=gl.GL_DYNAMIC_DRAW):
-        super().__init__(gl.GL_ELEMENT_ARRAY_BUFFER)
+        super().__init__()
         self.usage = usage
         self._length = len(data)
         self._gl_type = np_to_gl_type(data.dtype.base)
-        self.allocate_and_write(data)
+        with self.bound():
+            self.allocate_and_write(data)
 
     def bind(self) -> bool:
         changed = super().bind()
         if changed:
             vao = VAO.get_bound()
-            # FIXME: This currently makes it very difficult to create EBOs, since
-            #        the EBO initialiser will attempt to bind it, which can't be done
-            #        while a VAO is bound.
-            assert vao.handle == 0 or vao.ebo is self, 'use VAO.bind_ebo to bind an EBO to a VAO'
             vao._ebo = self
         return changed
 
@@ -193,9 +230,7 @@ class EBO(BufferObject):
 
 class UBO(BufferObject):
     kind = object()
-
-    def __init__(self):
-        super().__init__(gl.GL_UNIFORM_BUFFER)
+    _target = gl.GL_UNIFORM_BUFFER
 
 
 class _VAO(_BindableGLObject):
@@ -216,7 +251,6 @@ class _VAO(_BindableGLObject):
 
     def bind_ebo(self, ebo: EBO):
         assert self.is_bound()
-        self._ebo = ebo
         ebo.bind()
 
     @property
@@ -228,7 +262,8 @@ class _VAO(_BindableGLObject):
         assert self.ebo is not None
         self.ebo.draw_elements(mode)
 
-    def _do_bind(self, handle):
+    @classmethod
+    def _do_bind(cls, handle):
         gl.glBindVertexArray(handle)
 
 
@@ -243,10 +278,9 @@ class DefaultVAO(_VAO):
 class VAO(_VAO):
     def __init__(self, ebo: Optional[EBO] = None):
         super().__init__(gl.glGenVertexArrays(1))
-        self._ebo = None
-        self.bind()
         if ebo is not None:
-            self.bind_ebo(ebo)
+            with self.bound():
+                self.bind_ebo(ebo)
 
     @classmethod
     def get_default(cls):
@@ -258,13 +292,18 @@ class VAO(_VAO):
 
 
 class TextureObject(_BindableGLObject):
-    def __init__(self, target):
-        self._target = target
-        super().__init__(gl.glGenTextures(1), shareable=True)
-        self.bind()
+    @property
+    @classmethod
+    @abstractmethod
+    def _target(cls) -> str:
+        pass
 
-    def _do_bind(self, handle):
-        gl.glBindTexture(self._target, handle)
+    def __init__(self):
+        super().__init__(gl.glGenTextures(1), shareable=True)
+
+    @classmethod
+    def _do_bind(cls, handle):
+        gl.glBindTexture(cls._target, handle)
 
     def _do_destroy(self):
         if gl.glDeleteTextures is not None:
@@ -273,15 +312,18 @@ class TextureObject(_BindableGLObject):
 
 class Texture2D(TextureObject):
     kind = object()
-
-    def __init__(self):
-        super().__init__(gl.GL_TEXTURE_2D)
+    _target = gl.GL_TEXTURE_2D
 
 
 class ShaderObject(_GLObject):
-    def __init__(self, shader_type):
-        self._shader_type = shader_type
-        super().__init__(gl.glCreateShader(shader_type), shareable=True)
+    @property
+    @classmethod
+    @abstractmethod
+    def _shader_type(cls) -> str:
+        pass
+
+    def __init__(self):
+        super().__init__(gl.glCreateShader(self._shader_type), shareable=True)
 
     def gl_shader_source(self, source):
         gl.glShaderSource(self.handle, source)
@@ -309,13 +351,11 @@ class ShaderObject(_GLObject):
 
 
 class VertexShader(ShaderObject):
-    def __init__(self):
-        super().__init__(gl.GL_VERTEX_SHADER)
+    _shader_type = gl.GL_VERTEX_SHADER
 
 
 class FragmentShader(ShaderObject):
-    def __init__(self):
-        super().__init__(gl.GL_FRAGMENT_SHADER)
+    _shader_type = gl.GL_FRAGMENT_SHADER
 
 
 class ShaderProgram(_BindableGLObject):
@@ -357,12 +397,21 @@ class ShaderProgram(_BindableGLObject):
     def use(self):
         self.bind()
 
-    def _do_bind(self, handle):
+    @classmethod
+    def _do_bind(cls, handle):
         gl.glUseProgram(handle)
 
     def _do_destroy(self):
         if gl.glDeleteProgram is not None:
             gl.glDeleteProgram(self.handle)
+
+
+# Add a hook for unhandled exceptions which disables warnings for leak monitoring.
+old_excepthook = sys.excepthook
+def excepthook(*args):
+    cfg.monitor_leaks = False
+    old_excepthook(*args)
+sys.excepthook = excepthook
 
 
 Window.set_bound_default_class(VAO.kind, DefaultVAO)

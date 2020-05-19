@@ -9,7 +9,7 @@ import glip
 
 vertex_shader_source = r"""
 #version 330 core
-in vec3 pos;
+layout(location = 0) in vec3 pos;
 
 void main() {
     gl_Position = vec4(pos.x, pos.y, pos.z, 1.0);
@@ -59,17 +59,15 @@ def main():
         -0.5,  0.5, 0.0,
     ], dtype=np.float32)
 
-    vbo = glip.VBO()
-    gl.glBufferData(gl.GL_ARRAY_BUFFER, vertices.nbytes, vertices.data, gl.GL_DYNAMIC_DRAW)
-
     ebo = glip.EBO(indices)
+    vbo = glip.VBO(vertices)
+    # Create a VAO with ebo bound to it.
     vao = glip.VAO(ebo=ebo)
 
-    # NOTE: `vbo` and `vao` are both bound at this point, which is required.
-    gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, False, 3 * vertices.itemsize, C.c_void_p(0))
-    gl.glEnableVertexAttribArray(0)
-
-    vao.unbind()
+    # Connect vbo data to location 0 (which is `pos` in our vertex shader).
+    with vao.bound(), vbo.bound():
+        gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, False, 3 * vertices.itemsize, C.c_void_p(0))
+        gl.glEnableVertexAttribArray(0)
 
     while not glfw.window_should_close(window._glfw_window):
         # TODO: Process input
@@ -78,8 +76,8 @@ def main():
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
         program.use()
-        vao.bind()
-        vao.draw_elements(glip.PrimitiveType.TRIANGLES)
+        with vao.bound():
+            vao.draw_elements(glip.PrimitiveType.TRIANGLES)
 
         glfw.swap_buffers(window._glfw_window)
         glfw.poll_events()
