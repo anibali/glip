@@ -1,5 +1,5 @@
 import weakref
-from typing import Optional
+from typing import Optional, Callable
 
 import OpenGL.GL as gl
 import glfw
@@ -49,6 +49,13 @@ class Window:
         self._defaults = {}
         for kind, default_class in self._default_classes.items():
             self._defaults[kind] = default_class()
+        # Callbacks
+        self.on_resize: Optional[Callable[[int, int], None]] = None
+        glfw.set_framebuffer_size_callback(self._glfw_window, self._framebuffer_size_callback)
+
+    def _framebuffer_size_callback(self, glfw_window, width, height):
+        if self.on_resize is not None:
+            self.on_resize(width, height)
 
     @classmethod
     def set_bound_default_class(cls, kind, default_class):
@@ -105,6 +112,16 @@ class Window:
                 self.clear_colour(*colour)
             mask |= gl.GL_COLOR_BUFFER_BIT
         gl.glClear(mask)
+
+    def set_viewport(self, x: int, y: int, width: int, height: int):
+        gl.glViewport(x, y, width, height)
+
+    def should_close(self) -> bool:
+        return glfw.window_should_close(self._glfw_window)
+
+    def tick(self):
+        glfw.swap_buffers(self._glfw_window)
+        glfw.poll_events()
 
 
 class ObjectContext:

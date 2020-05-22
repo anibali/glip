@@ -1,3 +1,4 @@
+import ctypes as C
 import enum
 import sys
 import traceback
@@ -199,6 +200,10 @@ class VBO(BufferObject):
         assert self.is_bound()
         gl.glBufferData(gl.GL_ARRAY_BUFFER, data.nbytes, data.data, self.usage)
 
+    def gl_vertex_attrib_pointer(self, index, size, np_type, normalised: bool, stride: int, offset: int):
+        assert self.is_bound()
+        gl.glVertexAttribPointer(index, size, np_to_gl_type(np_type), normalised, stride, C.c_void_p(offset))
+
 
 class EBO(BufferObject):
     kind = object()
@@ -261,6 +266,10 @@ class _VAO(_BindableGLObject):
         assert self.is_bound()
         assert self.ebo is not None
         self.ebo.draw_elements(mode)
+
+    def gl_enable_vertex_attrib_array(self, index):
+        assert self.is_bound()
+        gl.glEnableVertexAttribArray(index)
 
     @classmethod
     def _do_bind(cls, handle):

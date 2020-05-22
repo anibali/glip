@@ -1,8 +1,5 @@
 """Adaptation of https://learnopengl.com/Getting-started/Hello-Triangle."""
-import ctypes as C
 
-import OpenGL.GL as gl
-import glfw
 import numpy as np
 
 import glip
@@ -26,17 +23,12 @@ void main() {
 """
 
 
-def framebuffer_size_callback(glfw_window, width, height):
-    gl.glViewport(0, 0, width, height)
-    print(width, height)
-
-
 def main():
     # Enable handy debugging settings.
     glip.cfg.development_mode()
 
     window = glip.Window(800, 600, 'Hello triangle')
-    glfw.set_framebuffer_size_callback(window._glfw_window, framebuffer_size_callback)
+    window.on_resize = lambda width, height: window.set_viewport(0, 0, width, height)
 
     vertex_shader = glip.VertexShader()
     vertex_shader.compile(vertex_shader_source)
@@ -65,11 +57,13 @@ def main():
     vao = glip.VAO(ebo=ebo)
 
     # Connect vbo data to location 0 (which is `pos` in our vertex shader).
-    with vao.bound(), vbo.bound():
-        gl.glVertexAttribPointer(0, 3, gl.GL_FLOAT, False, 3 * vertices.itemsize, C.c_void_p(0))
-        gl.glEnableVertexAttribArray(0)
+    # TODO: Make a nicer wrapper for this.
+    with vao.bound():
+        with vbo.bound():
+            vbo.gl_vertex_attrib_pointer(0, 3, np.float32, False, 3 * vertices.itemsize, 0)
+        vao.gl_enable_vertex_attrib_array(0)
 
-    while not glfw.window_should_close(window._glfw_window):
+    while not window.should_close():
         # TODO: Process input
 
         window.clear(colour=[0.2, 0.3, 0.3])
@@ -78,8 +72,7 @@ def main():
         with vao.bound():
             vao.draw_elements(glip.PrimitiveType.TRIANGLES)
 
-        glfw.swap_buffers(window._glfw_window)
-        glfw.poll_events()
+        window.tick()
 
     # Clean up objects.
     program.destroy()
