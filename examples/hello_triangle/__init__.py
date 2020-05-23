@@ -6,10 +6,10 @@ import glip
 
 vertex_shader_source = r"""
 #version 330 core
-layout(location = 0) in vec3 pos;
+in vec3 position;
 
 void main() {
-    gl_Position = vec4(pos.x, pos.y, pos.z, 1.0);
+    gl_Position = vec4(position.x, position.y, position.z, 1.0);
 }
 """
 
@@ -30,14 +30,13 @@ def main():
     window = glip.Window(800, 600, 'Hello triangle')
     window.on_resize = lambda width, height: window.set_viewport(0, 0, width, height)
 
-    vertex_shader = glip.VertexShader()
-    vertex_shader.compile(vertex_shader_source)
-    fragment_shader = glip.FragmentShader()
-    fragment_shader.compile(fragment_shader_source)
-    program = glip.ShaderProgram()
-    program.link([vertex_shader, fragment_shader])
-    vertex_shader.destroy()
-    fragment_shader.destroy()
+    position_attrib = glip.VertexAttrib(0, size=3, dtype=np.float32)
+
+    program = glip.ShaderProgram(
+        vertex_shader=vertex_shader_source,
+        fragment_shader=fragment_shader_source,
+        vertex_attribs={'position': position_attrib},
+    )
 
     indices = np.asarray([
         0, 1, 3,  # First triangle
@@ -56,12 +55,9 @@ def main():
     # Create a VAO with ebo bound to it.
     vao = glip.VAO(ebo=ebo)
 
-    # Connect vbo data to location 0 (which is `pos` in our vertex shader).
-    # TODO: Make a nicer wrapper for this.
-    with vao.bound():
-        with vbo.bound():
-            vbo.gl_vertex_attrib_pointer(0, 3, np.float32, False, 3 * vertices.itemsize, 0)
-        vao.gl_enable_vertex_attrib_array(0)
+    # Connect the position vertex attribute with its data.
+    with vao.bound(), vbo.bound():
+        vao.connect_vertex_attrib_array(position_attrib, vbo, 3 * vertices.itemsize)
 
     while not window.should_close():
         # TODO: Process input

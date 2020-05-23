@@ -5,7 +5,7 @@ import traceback
 import warnings
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from typing import Optional
+from typing import Optional, Dict, List, Union
 
 import OpenGL.GL as gl
 import numpy as np
@@ -14,26 +14,26 @@ from glip.config import cfg
 from glip.gl.context import Window
 
 
-def np_to_gl_type(np_type: np.dtype):
-    if np_type == np.int8:
+def np_to_gl_type(dtype):
+    if dtype == np.int8:
         return gl.GL_BYTE
-    if np_type == np.uint8:
+    if dtype == np.uint8:
         return gl.GL_UNSIGNED_BYTE
-    if np_type == np.int16:
+    if dtype == np.int16:
         return gl.GL_SHORT
-    if np_type == np.uint16:
+    if dtype == np.uint16:
         return gl.GL_UNSIGNED_SHORT
-    if np_type == np.int32:
+    if dtype == np.int32:
         return gl.GL_INT
-    if np_type == np.uint32:
+    if dtype == np.uint32:
         return gl.GL_UNSIGNED_INT
-    if np_type == np.float16:
+    if dtype == np.float16:
         return gl.GL_HALF_FLOAT
-    if np_type == np.float32:
+    if dtype == np.float32:
         return gl.GL_FLOAT
-    if np_type == np.float64:
+    if dtype == np.float64:
         return gl.GL_DOUBLE
-    raise TypeError(f'Unsupported base data type: {np_type}')
+    raise TypeError(f'Unsupported base data type: {dtype}')
 
 
 class PrimitiveType(enum.Enum):
@@ -200,9 +200,9 @@ class VBO(BufferObject):
         assert self.is_bound()
         gl.glBufferData(gl.GL_ARRAY_BUFFER, data.nbytes, data.data, self.usage)
 
-    def gl_vertex_attrib_pointer(self, index, size, np_type, normalised: bool, stride: int, offset: int):
+    def gl_vertex_attrib_pointer(self, index, size, dtype, normalised: bool, stride: int, offset: int):
         assert self.is_bound()
-        gl.glVertexAttribPointer(index, size, np_to_gl_type(np_type), normalised, stride, C.c_void_p(offset))
+        gl.glVertexAttribPointer(index, size, np_to_gl_type(dtype), normalised, stride, C.c_void_p(offset))
 
 
 class EBO(BufferObject):
@@ -238,6 +238,14 @@ class UBO(BufferObject):
     _target = gl.GL_UNIFORM_BUFFER
 
 
+class VertexAttrib:
+    def __init__(self, index: int, size: int, dtype):
+        assert 0 <= index < gl.glGetIntegerv(gl.GL_MAX_VERTEX_ATTRIBS)
+        self.index = index
+        self.size = size
+        self.dtype = dtype
+
+
 class _VAO(_BindableGLObject):
     kind = object()
 
@@ -266,6 +274,14 @@ class _VAO(_BindableGLObject):
         assert self.is_bound()
         assert self.ebo is not None
         self.ebo.draw_elements(mode)
+
+    def connect_vertex_attrib_array(self, vertex_attrib: VertexAttrib, vbo: VBO, stride: int,
+                                    offset: int = 0):
+        assert self.is_bound()
+        assert vbo.is_bound()
+        self.gl_enable_vertex_attrib_array(vertex_attrib.index)
+        vbo.gl_vertex_attrib_pointer(vertex_attrib.index, vertex_attrib.size, vertex_attrib.dtype,
+                                     False, stride, offset)
 
     def gl_enable_vertex_attrib_array(self, index):
         assert self.is_bound()
@@ -370,8 +386,41 @@ class FragmentShader(ShaderObject):
 class ShaderProgram(_BindableGLObject):
     kind = object()
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        vertex_shader: Optional[Union[str, VertexShader]] = None,
+        fragment_shader: Optional[Union[str, FragmentShader]] = None,
+        vertex_attribs: Dict[str, VertexAttrib] = None
+    ):
         super().__init__(gl.glCreateProgram(), shareable=True)
+        if vertex_attribs is None:
+            vertex_attribs = {}
+        # TODO: It would be nice to have a way of detecting missing attribute names.
+        for name, vertex_attrib in vertex_attribs.items():
+            self.bind_attrib_location(vertex_attrib, name)
+        if isinstance(vertex_shader, str):
+            vertex_shader_source = vertex_shader
+            vertex_shader = VertexShader()
+            vertex_shader.compile(vertex_shader_source)
+            destroy_vertex_shader = True
+        else:
+            destroy_vertex_shader = False
+        if isinstance(fragment_shader, str):
+            fragment_shader_source = fragment_shader
+            fragment_shader = FragmentShader()
+            fragment_shader.compile(fragment_shader_source)
+            destroy_fragment_shader = True
+        else:
+            destroy_fragment_shader = False
+        shaders = [s for s in [vertex_shader, fragment_shader]
+                   if s is not None]
+        if len(shaders) > 0:
+            self.link(shaders)
+        if destroy_vertex_shader:
+            vertex_shader.destroy()
+        if destroy_fragment_shader:
+            fragment_shader.destroy()
 
     def gl_attach_shader(self, shader: ShaderObject):
         gl.glAttachShader(self.handle, shader.handle)
@@ -387,6 +436,9 @@ class ShaderProgram(_BindableGLObject):
 
     def gl_get_program_info_log(self):
         return gl.glGetProgramInfoLog(self.handle).decode()
+
+    def bind_attrib_location(self, vertex_attrib: VertexAttrib, name: str):
+        gl.glBindAttribLocation(self.handle, vertex_attrib.index, name)
 
     def link(self, shaders, check_errors=True):
         # Attach the shaders to this program.
