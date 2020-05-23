@@ -27,7 +27,7 @@ def main():
     # Enable handy debugging settings.
     glip.cfg.development_mode()
 
-    window = glip.Window(800, 600, 'Hello triangle')
+    window = glip.Window(800, 600, 'Hello quad')
     window.on_resize = lambda width, height: window.set_viewport(0, 0, width, height)
 
     position_attrib = glip.VertexAttrib(0, size=3, dtype=np.float32)
