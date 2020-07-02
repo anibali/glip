@@ -59,8 +59,9 @@ def main():
     with vao.bound(), vbo.bound():
         vao.connect_vertex_attrib_array(position_attrib, vbo, vertices.strides[0])
 
-    while not window.should_close():
-        # TODO: Process input
+    while not window.should_close:
+        if window.keyboard.is_down(glip.Key.ESCAPE):
+            window.should_close = True
 
         window.clear(colour=[0.2, 0.3, 0.3])
 

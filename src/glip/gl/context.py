@@ -4,6 +4,8 @@ from typing import Optional, Callable
 import OpenGL.GL as gl
 import glfw
 
+from glip.gl.input import Keyboard, Mouse
+
 _glfw_is_initialised = False
 def initialise_glfw():
     global _glfw_is_initialised
@@ -49,13 +51,35 @@ class Window:
         self._defaults = {}
         for kind, default_class in self._default_classes.items():
             self._defaults[kind] = default_class()
+        # Input
+        self.keyboard = Keyboard()
+        self.mouse = Mouse()
         # Callbacks
         self.on_resize: Optional[Callable[[int, int], None]] = None
         glfw.set_framebuffer_size_callback(self._glfw_window, self._framebuffer_size_callback)
+        glfw.set_key_callback(self._glfw_window, self._key_callback)
+        glfw.set_mouse_button_callback(self._glfw_window, self._mouse_button_callback)
+        glfw.set_cursor_pos_callback(self._glfw_window, self._cursor_pos_callback)
 
     def _framebuffer_size_callback(self, glfw_window, width, height):
         if self.on_resize is not None:
             self.on_resize(width, height)
+
+    def _key_callback(self, glfw_window, key, scancode, action, mods):
+        self.keyboard.set_modifiers(mods)
+        if action == glfw.PRESS:
+            self.keyboard.set_key_down(key)
+        if action == glfw.RELEASE:
+            self.keyboard.set_key_up(key)
+
+    def _mouse_button_callback(self, glfw_window, button, action, mods):
+        if action == glfw.PRESS:
+            self.mouse.fire_button_down(button, *glfw.get_cursor_pos(self._glfw_window))
+        if action == glfw.RELEASE:
+            self.mouse.fire_button_up(button, *glfw.get_cursor_pos(self._glfw_window))
+
+    def _cursor_pos_callback(self, glfw_window, x, y):
+        self.mouse.fire_move(x, y)
 
     @classmethod
     def set_bound_default_class(cls, kind, default_class):
@@ -116,12 +140,19 @@ class Window:
     def set_viewport(self, x: int, y: int, width: int, height: int):
         gl.glViewport(x, y, width, height)
 
+    @property
     def should_close(self) -> bool:
         return glfw.window_should_close(self._glfw_window)
+
+    @should_close.setter
+    def should_close(self, should_close: bool):
+        glfw.set_window_should_close(self._glfw_window, should_close)
 
     def tick(self):
         glfw.swap_buffers(self._glfw_window)
         glfw.poll_events()
+        self.keyboard.update()
+        self.mouse.update()
 
 
 class ObjectContext:
