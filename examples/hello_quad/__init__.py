@@ -44,20 +44,20 @@ def main():
     ], dtype=np.uint32)
 
     vertices = np.asarray([
-         0.5,  0.5, 0.0,
-         0.5, -0.5, 0.0,
-        -0.5, -0.5, 0.0,
-        -0.5,  0.5, 0.0,
+        [+0.5, +0.5, 0.0],
+        [+0.5, -0.5, 0.0],
+        [-0.5, -0.5, 0.0],
+        [-0.5, +0.5, 0.0],
     ], dtype=np.float32)
 
     ebo = glip.EBO(indices)
     vbo = glip.VBO(vertices)
-    # Create a VAO with ebo bound to it.
+    # Create a VAO with `ebo` bound to it.
     vao = glip.VAO(ebo=ebo)
 
     # Connect the position vertex attribute with its data.
     with vao.bound(), vbo.bound():
-        vao.connect_vertex_attrib_array(position_attrib, vbo, 3 * vertices.itemsize)
+        vao.connect_vertex_attrib_array(position_attrib, vbo, vertices.strides[0])
 
     while not window.should_close():
         # TODO: Process input
